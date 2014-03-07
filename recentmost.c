@@ -1,3 +1,34 @@
+/*
+many a times we want to find out most recently modified files on system 
+within a directory - it may be codebase, or configuration files, where
+we might have been changing things in order to make it work - but in the
+end when it finally began working, we lost track of which files had we
+touched.
+There are already ways to query most recently modified files,
+One is (we'll call it existingCmds1):
+
+$find ~/ -type f -printf '%TY-%Tm-%Td %TT %p\n' | sort  | tail -20
+
+(where 20 is the number of most recently modified files one would like to get). 
+
+existingCmds1 works, if one's "find" supports -printf option (find found on 
+many of the systems do not). Plus existingCmds1 takes lot more time than needed.
+
+Another way to achieve it is (let us call it existingCmds2):
+
+$find ~/xtg-main/ -type f|grep -v " "|xargs ls -lrt | tail -20
+
+but xargs starts splitting the arguments if they are too long - so existingCmds2
+does not achieve the objective.
+
+This utility, assuming that we build it to create executable "recentmost" 
+(gcc -Wall -Wextra -o recentmost recentmost.c),
+can be used as follows (recentmost-cmd):
+
+$find ~/ -type f|./recentmost 20
+
+On my system, existingCmds1 is taking ~9 secs on a dataset, and recentmost-cmd for the same dataset, takes ~1 sec.
+*/
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
