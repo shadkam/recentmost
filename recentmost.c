@@ -31,14 +31,23 @@ On my system, existingCmds1 is taking ~9 secs on a dataset, and recentmost-cmd f
 */
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#ifndef _WIN32
+#include <unistd.h>
+#include <time.h>
+typedef unsigned long long rmU64;
+#else
+#include <windows.h>
+#include <wchar.h>
+typedef unsigned __int64 rmU64;
+#endif
+
 // Thanks to https://gist.github.com/martinkunev/1365481
 // from which basic heap related code was originally taken
 struct filetimestamp {
 	char* name;
-	long long modtime;
+	rmU64 modtime;
 	int id;
 };
 typedef struct filetimestamp* HeapElement;
@@ -52,11 +61,12 @@ static int instance_count = 0;
 #define heap_term(h) (free((h)->data))
 #define CMP(a, b) ((a->modtime) <= (b->modtime))
 HeapElement
-heap_newElement(long long modtime, char* filepath) {
+heap_newElement(rmU64 fileModTime, char* filepath) {
+	HeapElement elem;
 	++instance_count;
-	HeapElement elem = malloc(sizeof(struct filetimestamp));
+	elem = malloc(sizeof(struct filetimestamp));
 	elem->id = instance_count;
-	elem->modtime = modtime;
+	elem->modtime = fileModTime;
 	elem->name = malloc((1+strlen(filepath))*sizeof(char));
 	strcpy(elem->name, filepath);
 	return elem;
@@ -69,22 +79,21 @@ heap_freeElement(HeapElement elem) {
 }
 void
 heap_init(struct heap *h, int size) {
-	*h = (struct heap){
-		.size = size,
-		.count = 0,
-		.data = malloc(sizeof(HeapElement) * size)
-	};
+	h->size  = size;
+	h->count = 0;
+	h->data  = malloc(sizeof(HeapElement) * size);
 	if (!h->data) _exit(1);
 }
 HeapElement
 heap_pop(struct heap *h) {
 	unsigned int index, swap, other;
+	HeapElement poppedElem = NULL, temp = NULL;
 	if (h->count==0) {
 		return NULL;
 	}
-	HeapElement poppedElem = h->data[0];
+	poppedElem = h->data[0];
 
-	HeapElement temp = h->data[--h->count];
+	temp = h->data[--h->count];
 	for(index = 0; 1; index = swap) {
 		swap = (index << 1) + 1;
 		if (swap >= h->count) break;
@@ -120,21 +129,50 @@ heap_push(struct heap *h, HeapElement value) {
 	h->data[index] = value;
 	return 1;
 }
-void
-offertoheap(struct heap *h, char *filepath) {
+int
+getFileModTime(const char* filepath, rmU64* out_FileModTime) {
+#ifdef _WIN32
+	FILETIME ft;
+	HANDLE fh;
+	fh = CreateFile(filepath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, NULL);
+	
+	if (fh == INVALID_HANDLE_VALUE) {
+		fprintf(stderr, "error: could not CreateFile(%s)\n", filepath);
+		return 1;
+	}
+	if (GetFileTime(fh, NULL, NULL, &ft) == 0) {
+		fprintf(stderr, "error: could not GetFileTime(%s)\n", filepath);
+		return 2;
+	}
+	*out_FileModTime = ft.dwHighDateTime;
+	*out_FileModTime = (*out_FileModTime)<<32;
+	*out_FileModTime |= ft.dwLowDateTime;
+#else
 	struct stat st;
-	HeapElement elem = NULL;
 	if (stat(filepath, &st)) {
 		fprintf(stderr, "error: filepath '%s' not found", filepath);
+		return 1;
+	}
+	*out_FileModTime = st.st_mtime;//.tv_sec;
+#endif
+	return 0;
+}
+void
+offertoheap(struct heap *h, char *filepath) {
+	HeapElement elem = NULL;
+	rmU64 fileModTime = 0;
+	if (0!=getFileModTime(filepath, &fileModTime)) {
+		//error - but msg already shown
+		//fprintf(stderr, "error: could not find or get mod time for filepath '%s'\n", filepath);
 	} else {
-		elem = heap_newElement(st.st_mtim.tv_sec, filepath);
+		elem = heap_newElement(fileModTime, filepath);
 		if (!heap_push(h, elem)) {
 			heap_freeElement(elem);
 			elem = NULL;
 		}
 	}
 }
-#define LINEBUFLEN 10
+#define LINEBUFLEN 100
 void processLines(struct heap *h) {
 	int c = EOF;
 	size_t linelen = 0;
@@ -177,20 +215,45 @@ checkInputs(int argc, char** argv, int* N) {
 	}
 	return *N;
 }
+void
+fillTimeStr(char* timeStr, rmU64 time) {
+#ifdef _WIN32
+	FILETIME ft;
+	SYSTEMTIME st;
+	ft.dwHighDateTime =  time>>32;
+	ft.dwLowDateTime  =  time&0xFFFF;
+	FileTimeToLocalFileTime( &ft, &ft );
+	FileTimeToSystemTime   ( &ft, &st );
+#else
+	struct tm *tm1;
+	struct stat st;
+	memset(&st, '0', sizeof(st));
+	st.st_mtime/*.tv_sec*/ = time;
+	tm1 = localtime(&st.st_mtime);
+#endif
+	sprintf(timeStr, "%.4d-%.2d-%.2d %.2d:%.2d:%.2d",
+#ifdef _WIN32
+		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond
+#else
+		1900+tm1->tm_year, 1+tm1->tm_mon, tm1->tm_mday, tm1->tm_hour, tm1->tm_min, tm1->tm_sec
+#endif
+	);
+}
 int
 main(int argc, char** argv) {
-	int i, N; struct heap hh;
+	int i, N; struct heap hh; char timeStr[20];
+	HeapElement popped;
 	if (!checkInputs(argc, argv, &N))
 		return -1;
-
+	memset(timeStr, '.', sizeof(timeStr));
 	heap_init(&hh, N);
 	processLines(&hh);
-	HeapElement popped;
 	for (i=0; i<N*10; i++) {
 		popped = heap_pop(&hh);
 		if (!popped)
 			break;
-		printf("%s\n", popped->name);
+		fillTimeStr(timeStr, popped->modtime);
+		printf("%s %s\n", timeStr, popped->name);
 		heap_freeElement(popped);
 	}
 	heap_term(&hh);
