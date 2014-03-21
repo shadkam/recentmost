@@ -28,6 +28,10 @@ can be used as follows (recentmost-cmd):
 $find ~/ -type f|./recentmost 20
 
 On my system, existingCmds1 is taking ~9 secs on a dataset, and recentmost-cmd for the same dataset, takes ~1 sec.
+
+For Windows:
+[to Build] Go to Visual Studio Cmd Prompt, $cl.exe recentmost.c
+[to run] Go to the dir where recently modified files are to be looked for, $dir /b/s/A-D | /path/to/recentmost.exe 20
 */
 #include <stdio.h>
 #include <string.h>
