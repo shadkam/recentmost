@@ -153,7 +153,7 @@ getFileModTime(const char* filepath, rmU64* out_FileModTime) {
 		fprintf(stderr, "error: filepath '%s' not found", filepath);
 		return 1;
 	}
-	*out_FileModTime = st.st_mtime;//.tv_sec;
+	*out_FileModTime = st.st_mtime;
 #endif
 	return 0;
 }
@@ -199,21 +199,28 @@ void processLines(struct heap *h) {
 	}
 	free(filepath);
 }
+#define NoTimeArg "-noTime"
 void
 usage(char* progname) {
-	fprintf(stderr, "Usage:%s <filecount>\n", progname);
+	fprintf(stderr, "Usage:%s <filecount> [%s (print last modified time)]\n", progname, NoTimeArg);
 }
 int
-checkInputs(int argc, char** argv, int* N) {
+checkInputs(int argc, char** argv, int* N, int* bPrintTime) {
 	if (argc<2) {
 		usage(argv[0]);
 		return 0;
 	}
 	*N = atoi(argv[1]);
 	if (*N==0) {
+		fprintf(stderr, "Error: need numeric non zero value (%s) for filecount\n", argv[1]);
 		usage(argv[0]);
+		return 0;
 	}
-	return *N;
+	*bPrintTime = 1;
+	if (argc>2 && 0==strncmp(NoTimeArg, argv[2], sizeof(NoTimeArg))) {
+		*bPrintTime = 0;
+	}
+	return 1;
 }
 void
 fillTimeStr(char* timeStr, rmU64 time) {
@@ -228,32 +235,36 @@ fillTimeStr(char* timeStr, rmU64 time) {
 	struct tm *tm1;
 	struct stat st;
 	memset(&st, '0', sizeof(st));
-	st.st_mtime/*.tv_sec*/ = time;
+	st.st_mtime = time;
 	tm1 = localtime(&st.st_mtime);
 #endif
-	sprintf(timeStr, "%.4d-%.2d-%.2d %.2d:%.2d:%.2d",
+	sprintf(timeStr, "%.4d-%.2d-%.2d %.2d:%.2d:%.2d%s",
 #ifdef _WIN32
 		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond
 #else
 		1900+tm1->tm_year, 1+tm1->tm_mon, tm1->tm_mday, tm1->tm_hour, tm1->tm_min, tm1->tm_sec
 #endif
-	);
+	," ");
 }
 int
 main(int argc, char** argv) {
-	int i, N; struct heap hh; char timeStr[20];
+	int i, N; struct heap hh; int bPrintTime = 0;
+	char timeStr[] = "year-MM-dd hh:mm:ss ";//just to take care of size
 	HeapElement popped;
-	if (!checkInputs(argc, argv, &N))
-		return -1;
-	memset(timeStr, '.', sizeof(timeStr));
+	if (!checkInputs(argc, argv, &N, &bPrintTime)) {
+		return -1; 
+	}
+	memset(timeStr, '\0', sizeof(timeStr));
 	heap_init(&hh, N);
 	processLines(&hh);
 	for (i=0; i<N*10; i++) {
 		popped = heap_pop(&hh);
 		if (!popped)
 			break;
-		fillTimeStr(timeStr, popped->modtime);
-		printf("%s %s\n", timeStr, popped->name);
+		if (bPrintTime) {
+			fillTimeStr(timeStr, popped->modtime);
+		}
+		printf("%s%s\n", timeStr, popped->name);
 		heap_freeElement(popped);
 	}
 	heap_term(&hh);
