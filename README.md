@@ -40,6 +40,8 @@ $ gcc -Wall -Wextra -o recentmost recentmost.c
 $ find ~/ -type f|./recentmost 20
 </pre>
 
+Or just type `make` followed by `make test`.
+
 Windows
 -------
 
